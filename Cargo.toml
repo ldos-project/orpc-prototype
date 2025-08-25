@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "orpc",
+    "orpc_macros"
+]
+
+[workspace.dependencies]
+
+[workspace.lints]
