@@ -17,6 +17,8 @@ pub fn orpc_trait_macro_impl(
     // The trait method declarations.
     let mut method_decls = Vec::new();
 
+    let vis = &input.vis;
+
     for item in &input.items {
         match item {
             syn::TraitItem::Method(trait_item_method) => {
@@ -32,6 +34,7 @@ pub fn orpc_trait_macro_impl(
                             &mut errors,
                             &trait_item_method,
                             typ,
+                            vis,
                         );
                     }
                     None => {
@@ -88,8 +91,6 @@ pub fn orpc_trait_macro_impl(
     // The type of the OQueue struct that holds references to the OQueues associated with this trait.
     let oqueues_struct_ident = format_ident!("{}OQueues", input.ident, span = input.ident.span());
 
-    let vis = &input.vis;
-
     let oqueue_struct_docs = LitStr::new(
         &format!(
             "All the OQueue references associated with {}. This is used to build the ORPC internal data structures for server.",
@@ -107,7 +108,7 @@ pub fn orpc_trait_macro_impl(
             #(#oqueue_declarations),*
         }
 
-        impl Default for #oqueues_struct_ident {
+        impl ::core::default::Default for #oqueues_struct_ident {
             fn default() -> Self {
                 Self {
                     #(#oqueue_initializers),*
@@ -117,6 +118,7 @@ pub fn orpc_trait_macro_impl(
 
         #(#errors;)*
     };
+
     output
 }
 
@@ -164,6 +166,7 @@ fn process_oqueue_method(
     errors: &mut Vec<proc_macro2::TokenStream>,
     trait_item_method: &syn::TraitItemMethod,
     ret_type: &syn::Type,
+    vis: &syn::Visibility,
 ) {
     // Check for the correct method signature.
     if trait_item_method.sig.inputs.len() != 1 {
@@ -186,6 +189,7 @@ fn process_oqueue_method(
     }
 
     let ident = &trait_item_method.sig.ident;
+    
     // Extract the docs to place on the field.
     let attrs: Vec<_> = trait_item_method
         .attrs
@@ -199,20 +203,20 @@ fn process_oqueue_method(
     // Create the initializer for the field. In the error case, just use `todo!` and generate an error separately.
     if let Some(constr) = &trait_item_method.default {
         oqueue_initializers.push(quote! {
-                #ident: #constr,
+                #ident: #constr
         });
     } else {
         errors.push(quote_spanned! { trait_item_method.span() =>
             compile_error!("method body providing constructor is missing")
         });
         oqueue_initializers.push(quote! {
-                #ident: todo!(),
+                #ident: todo!()
         });
     }
 
     oqueue_declarations.push(quote! {
         #(#attrs)*
-        #ident: #ret_type,
+        #vis #ident: #ret_type
     });
 
     // Copy over the method declaration while removing the "default" which would just be the initializer for the OQueue.

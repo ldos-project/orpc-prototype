@@ -94,6 +94,29 @@ impl ServerBase {
     }
 }
 
+/// Start a new server thread. This should only be called while spawning a server.
+pub fn spawn_thread<T: Server + Send + RefUnwindSafe + 'static>(
+    server: std::sync::Arc<T>,
+    body: impl (FnOnce() -> Result<(), Box<dyn std::error::Error>>) + Send + UnwindSafe + 'static,
+) {
+    std::thread::spawn({
+        move || {
+            if let Result::Err(payload) = std::panic::catch_unwind({
+                let server = server.clone();
+                move || {
+                    Server::orpc_server_base(server.as_ref()).attach_task();
+                    let _server_context = CurrentServer::enter_server_context(server.as_ref());
+                    if let Result::Err(e) = body() {
+                        Server::orpc_server_base(server.as_ref()).abort(&e);
+                    }
+                }
+            }) {
+                Server::orpc_server_base(server.as_ref()).abort(&RPCError::from_panic(payload));
+            }
+        }
+    });
+}
+
 thread_local! {
     // PERFORMANCE: The implementation of `thread_local` relies on LLVM devirtualization to eliminate a function call
     // during access. A better performing implementation may be needed to eliminate the overhead of internal abort
@@ -133,29 +156,6 @@ impl CurrentServer {
         CURRENT_SERVER.set(server.orpc_server_base().get_ref());
         CurrentServerChangeGuard(previous_server)
     }
-
-    /// Start a new server thread. This should only be called while spawning a server.
-    pub fn spawn_thread<T: Server + Send + RefUnwindSafe + 'static>(
-        server: std::sync::Arc<T>,
-        body: impl (FnOnce() -> Result<(), Box<dyn std::error::Error>>) + Send + UnwindSafe + 'static,
-    ) {
-        std::thread::spawn({
-            move || {
-                if let Result::Err(payload) = std::panic::catch_unwind({
-                    let server = server.clone();
-                    move || {
-                        Server::orpc_server_base(server.as_ref()).attach_task();
-                        let _server_context = CurrentServer::enter_server_context(server.as_ref());
-                        if let Result::Err(e) = body() {
-                            Server::orpc_server_base(server.as_ref()).abort(&e);
-                        }
-                    }
-                }) {
-                    Server::orpc_server_base(server.as_ref()).abort(&RPCError::from_panic(payload));
-                }
-            }
-        });
-    }
 }
 
 pub struct CurrentServerChangeGuard(Option<Arc<dyn Server + Sync + RefUnwindSafe + Send>>);
@@ -177,10 +177,7 @@ mod test {
 
     use snafu::Whatever;
 
-    use crate::{
-        orpc_impl::errors::RPCError,
-        sync::blocker::Blocker,
-    };
+    use crate::{orpc_impl::errors::RPCError, sync::blocker::Blocker};
 
     use super::*;
 
@@ -202,7 +199,7 @@ mod test {
         thread_exited: AtomicBool,
     }
 
-    impl<F: Fn() + Sync + Send + 'static> Server for TestServer<F> {
+    impl<F: Fn() + Sync + Send + RefUnwindSafe + 'static> Server for TestServer<F> {
         fn orpc_server_base(&self) -> &ServerBase {
             &self.base
         }

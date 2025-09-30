@@ -1,6 +1,6 @@
 /// The module containing implementations of the ORPC framework.
 
-use std::sync::Arc;
+use std::{panic::RefUnwindSafe, sync::Arc};
 
 use crate::orpc_impl::framework::ServerBase;
 
@@ -9,7 +9,7 @@ pub mod framework;
 mod integration_test;
 
 /// The primary trait for all server. This provides access to information and capabilities common to all servers.
-pub trait Server: Sync {
+pub trait Server: Sync + Send + RefUnwindSafe + 'static {
     /// **INTERNAL** User code should never call this directly, however it cannot be private because generated code must
     /// use it.
     ///
