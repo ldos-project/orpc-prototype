@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "orpc",
-    "orpc_macros"
-]
+members = ["orpc", "orpc_macros", "prefetcher_demo"]
 
 [workspace.dependencies]
 
