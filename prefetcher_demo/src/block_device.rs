@@ -12,35 +12,38 @@ use snafu::Snafu;
 
 pub const BLOCK_SIZE: usize = 4096;
 
+/// The block data returned from a read.
 #[derive(Clone)]
 pub(crate) struct Block {
+    /// The block number.
     pub block_id: usize,
+    /// The block data.
     pub data: Box<[u8]>,
 }
 
+/// A read request
 pub(crate) struct ReadRequest {
+    /// The block number.
     pub block_id: usize,
+    /// A handle to the OQueue to send the result of the read to.
     pub reply_to: Box<dyn Sender<Block>>,
-}
-
-#[derive(Snafu, Debug)]
-pub(crate) enum IOError {
-    #[snafu(transparent)]
-    RPCError { source: RPCError },
-    #[snafu(transparent)]
-    OQueueAttachError { source: OQueueAttachError },
-    #[snafu(display("{message}"))]
-    IOFailure { message: String },
 }
 
 #[orpc_trait]
 pub(crate) trait BlockDevice {
+    /// Read a block.
     fn read(&self, block_id: usize) -> Result<Block, IOError>;
-    fn read_request_observation_oqueue(&self) -> OQueueRef<usize> {
-        ObservableLockingQueue::new(16, 4)
-    }
+
+    /// An asynchronous read request. ReadRequest includes a handle to allow replying to the message.
     fn read_request_oqueue(&self) -> OQueueRef<ReadRequest> {
         LockingQueue::new(16)
+    }
+
+    /// An OQueue which is sent every block_id as it is read.
+    ///
+    /// NOTE: In the future, this will be automatically created in at least some cases.
+    fn read_request_observation_oqueue(&self) -> OQueueRef<usize> {
+        ObservableLockingQueue::new(16, 4)
     }
 }
 
@@ -49,4 +52,18 @@ pub(crate) trait BlockCache: BlockDevice {
     fn prefetch_request_oqueue(&self) -> OQueueRef<usize> {
         LockingQueue::new(16)
     }
+}
+
+/// An error that can be returned from block device operations.
+#[derive(Snafu, Debug)]
+pub(crate) enum IOError {
+    /// An RPC failure.
+    #[snafu(transparent)]
+    RPCError { source: RPCError },
+    /// An OQueue handling failure.
+    #[snafu(transparent)]
+    OQueueAttachError { source: OQueueAttachError },
+    /// An error in the IO operation.
+    #[snafu(display("{message}"))]
+    IOFailure { message: String },
 }

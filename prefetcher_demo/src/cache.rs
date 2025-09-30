@@ -1,16 +1,15 @@
 //! An ORPC server implementing a block cache
 
-use std::{collections::HashMap, error::Error, panic::RefUnwindSafe};
+use std::{collections::HashMap, error::Error};
 
 use orpc::{
     CurrentServer, ServerRef,
-    oqueue::{OQueue, OQueueRef, Receiver, Sender, locking::LockingQueue},
+    oqueue::{OQueueRef, Receiver, Sender, locking::LockingQueue},
     orpc_impl, orpc_server, spawn_thread,
     sync::{Mutex, blocker::select},
 };
-use snafu::{ResultExt as _, Whatever};
 
-use crate::block_device::{BLOCK_SIZE, Block, BlockCache, BlockDevice, IOError, ReadRequest};
+use crate::block_device::{Block, BlockCache, BlockDevice, IOError, ReadRequest};
 
 #[orpc_server(crate::block_device::BlockDevice, crate::block_device::BlockCache)]
 pub struct Cache {
@@ -133,6 +132,7 @@ impl Cache {
         prefetch_request_receiver: Box<dyn Receiver<usize>>,
     ) {
         let mut outstanding_requests = HashMap::new();
+
         let read_request_observation_sender = self
             .read_request_observation_oqueue()
             .attach_sender()
