@@ -33,10 +33,11 @@ fn main() {
 
     let disk = disk::Disk::spawn(block_file).unwrap();
     let cache = cache::Cache::spawn(disk.clone(), 16).unwrap();
-    let policy = prefetch_policy::Prefetcher::spawn(cache.clone()).unwrap();
+    // let policy = prefetch_policy::NextPagePrefetcher::spawn(cache.clone()).unwrap();
+    let policy = prefetch_policy::StrongStridePrefetcher::spawn(cache.clone()).unwrap();
 
     for i in 0..100 {
-        cache.read(i * 3).unwrap();
-        sleep(Duration::from_millis(1));
+        cache.read(i*3).unwrap();
+        // sleep(Duration::from_millis(1));
     }
 }
