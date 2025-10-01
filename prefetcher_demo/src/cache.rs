@@ -29,11 +29,11 @@ impl BlockDevice for Cache {
         {
             let cache = self.cache.lock();
             if let Some(data) = cache.get(&block_id).cloned() {
-                println!("Cache: Blocking cache hit {}", block_id);
+                println!("HIT {} (Cache)", block_id);
                 return Ok(Block { block_id, data });
             }
         }
-        println!("Cache: Blocking cache MISS {}", block_id);
+        println!("MISS {} (Cache)", block_id);
         let block = self.underlying.read(block_id)?;
         self.insert_cached_block(&block);
         Ok(block)
@@ -51,7 +51,7 @@ impl BlockCache for Cache {
 
 impl Cache {
     fn insert_cached_block(&self, block: &Block) {
-        println!("Cache: Inserting into cache {}", block.block_id);
+        println!("    Inserting {} (Cache)", block.block_id);
         let mut cache = self.cache.lock();
         match cache.entry(block.block_id) {
             std::collections::hash_map::Entry::Occupied(_) => {}
@@ -61,7 +61,7 @@ impl Cache {
         }
         if cache.len() > self.cache_size {
             if let Some(k) = cache.keys().min().copied() {
-                println!("Cache: Evicting {}", k);
+                // println!("Cache: Evicting {}", k);
                 cache.remove(&k);
             }
         }
@@ -73,7 +73,7 @@ impl Cache {
         block_id: usize,
         outstanding_requests: &mut HashMap<usize, Vec<Box<dyn Sender<Block>>>>,
     ) {
-        if !outstanding_requests.contains_key(&block_id) {
+        if !outstanding_requests.contains_key(&block_id) && !self.cache.lock().contains_key(&block_id) {
             underlying_read_request_sender.send(ReadRequest {
                 reply_to: self.reply_oqueue.attach_sender().unwrap(),
                 block_id,
@@ -90,7 +90,7 @@ impl Cache {
         {
             let cache = self.cache.lock();
             if let Some(data) = cache.get(&req.block_id).cloned() {
-                println!("Cache: Message cache hit {}", req.block_id);
+                println!("HIT {} (async)", req.block_id);
                 req.reply_to.send(Block {
                     block_id: req.block_id,
                     data,
@@ -99,7 +99,7 @@ impl Cache {
             }
         }
 
-        println!("Cache: Message cache MISS {}", req.block_id);
+        println!("MISS {} (async)", req.block_id);
         let entry = outstanding_requests.entry(req.block_id);
         let waiting = entry.or_insert_with(Default::default);
         waiting.push(req.reply_to);
@@ -115,7 +115,7 @@ impl Cache {
         block: Block,
         outstanding_requests: &mut HashMap<usize, Vec<Box<dyn Sender<Block>>>>,
     ) {
-        println!("Cache: Message read reply {}", block.block_id);
+        // println!("Cache: Message read reply {}", block.block_id);
         self.insert_cached_block(&block);
         if let Some(waiters) = outstanding_requests.remove(&block.block_id) {
             for waiter in waiters {
@@ -148,7 +148,7 @@ impl Cache {
                     );
                 },
                 if let req = prefetch_request_receiver.try_receive() {
-                    println!("Cache: Prefetch request {}", req);
+                    println!("  Prefetch req {}", req);
                     self.send_underlying_request(
                         underlying_read_request_sender.as_ref(),
                         req,

@@ -9,3 +9,6 @@ snafu = "*"
 
 [lints]
 workspace = true
+
+[profile.dev]
+panic = "unwind"

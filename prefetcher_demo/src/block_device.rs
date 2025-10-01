@@ -29,6 +29,7 @@ pub(crate) struct ReadRequest {
     pub reply_to: Box<dyn Sender<Block>>,
 }
 
+/// The trait for block devices which support reading blocks of data both synchronously and asynchronously.
 #[orpc_trait]
 pub(crate) trait BlockDevice {
     /// Read a block.
@@ -47,6 +48,8 @@ pub(crate) trait BlockDevice {
     }
 }
 
+/// The trait for block caches (generally on top of some other [`BlockDevice`]) which support the block interface for
+/// reading, but also interfaces for manipulating the cache.
 #[orpc_trait]
 pub(crate) trait BlockCache: BlockDevice {
     fn prefetch_request_oqueue(&self) -> OQueueRef<usize> {
