@@ -3,7 +3,8 @@
 
 use std::error::Error;
 
-use orpc::{CurrentServer, ServerRef, orpc_impl, orpc_server, spawn_thread};
+use orpc::{CurrentServer, ServerRef, oqueue::registry, orpc_impl, orpc_server, spawn_thread};
+use snafu::{FromString, OptionExt, ResultExt, Whatever, whatever};
 
 use crate::{
     block_device::BlockCache,
@@ -20,8 +21,7 @@ pub struct NextPagePrefetcher {
 impl Shutdown for NextPagePrefetcher {
     // An implementation of a method on the Shutdown trait
     fn shutdown(&self) -> Result<(), orpc_impl::errors::RPCError> {
-        self.shutdown.shutdown();
-        panic!("'Accidental' failure.")
+        self.shutdown.shutdown()
     }
 }
 
@@ -43,6 +43,7 @@ impl NextPagePrefetcher {
             move || {
                 loop {
                     let block_id = read_observer.strong_observe();
+
                     prefetch_sender.send(block_id + 1);
                     CurrentServer::abort_point();
                     server.shutdown.check_for_shutdown()?;
@@ -55,12 +56,25 @@ impl NextPagePrefetcher {
 
 /// A prefetcher which prefetches using a strong observer. It will always generate one prefetch for every read. It
 /// selects the block to prefetch based on the stride between the previous two reads.
-#[orpc_server()]
-pub struct StrongStridePrefetcher {}
+#[orpc_server(crate::shutdown::Shutdown)]
+pub struct StridePrefetcher {
+    shutdown: ShutdownState,
+}
 
-impl StrongStridePrefetcher {
+#[orpc_impl]
+impl Shutdown for StridePrefetcher {
+    // An implementation of a method on the Shutdown trait
+    fn shutdown(&self) -> Result<(), orpc_impl::errors::RPCError> {
+        self.shutdown.shutdown()
+    }
+}
+
+impl StridePrefetcher {
     pub fn spawn(cache: ServerRef<dyn BlockCache>) -> Result<ServerRef<Self>, Box<dyn Error>> {
-        let server = Self::new_with(|orpc_internal| Self { orpc_internal });
+        let server = Self::new_with(|orpc_internal| Self {
+            orpc_internal,
+            shutdown: Default::default(),
+        });
         spawn_thread(server.clone(), {
             // Setup OQueue Attachments
             let strong_observer = cache
@@ -70,6 +84,7 @@ impl StrongStridePrefetcher {
                 .read_request_observation_oqueue()
                 .attach_weak_observer()?;
             let prefetch_sender = cache.prefetch_request_oqueue().attach_sender()?;
+            let server = server.clone();
             // Server implementation
             move || {
                 loop {
@@ -87,6 +102,7 @@ impl StrongStridePrefetcher {
 
                     // Provide point for exiting the server if it crashed.
                     CurrentServer::abort_point();
+                    server.shutdown.check_for_shutdown()?;
                 }
             }
         });
@@ -94,31 +110,79 @@ impl StrongStridePrefetcher {
     }
 }
 
-/// A prefetcher which prefetches based on a weak observer only. This can miss reads and not prefetch based on them at
-/// all. It selects the block to prefetch based on the stride between the previous two reads.
-#[orpc_server()]
-pub struct WeakStridePrefetcher {}
+#[orpc_server(crate::shutdown::Shutdown)]
+pub struct StrideLoadAwarePrefetcher {
+    shutdown: ShutdownState,
+}
 
-impl WeakStridePrefetcher {
+#[orpc_impl]
+impl Shutdown for StrideLoadAwarePrefetcher {
+    // An implementation of a method on the Shutdown trait
+    fn shutdown(&self) -> Result<(), orpc_impl::errors::RPCError> {
+        self.shutdown.shutdown()
+    }
+}
+
+impl StrideLoadAwarePrefetcher {
     pub fn spawn(cache: ServerRef<dyn BlockCache>) -> Result<ServerRef<Self>, Box<dyn Error>> {
-        let server = Self::new_with(|orpc_internal| Self { orpc_internal });
+        let server = Self::new_with(|orpc_internal| Self {
+            orpc_internal,
+            shutdown: Default::default(),
+        });
         spawn_thread(server.clone(), {
-            let read_observer = cache
+            // Setup OQueue Attachments
+            let strong_observer = cache
+                .read_request_observation_oqueue()
+                .attach_strong_observer()?;
+            let weak_observer = cache
                 .read_request_observation_oqueue()
                 .attach_weak_observer()?;
             let prefetch_sender = cache.prefetch_request_oqueue().attach_sender()?;
+            let system_load_observer = registry::lookup::<u8>("system_load")
+                .unwrap_or_whatever()?
+                .attach_weak_observer()?;
+            let server = server.clone();
+            // Server implementation
             move || {
                 loop {
-                    read_observer.wait();
-                    let reads = read_observer.weak_observe_recent(2);
+                    // Wait for the next read.
+                    let block_id = strong_observer.strong_observe();
+
+                    // Get the last two
+                    let reads = weak_observer.weak_observe_recent(2);
+
+                    // Prefetch algorithm
                     if reads.len() == 2 {
+                        // Get the system load
+                        let system_load = system_load_observer
+                            .weak_observe_recent(1)
+                            .pop()
+                            .unwrap_or_default() as usize;
+                        // Prefetch farther ahead when load is lower.
+                        let steps = ((255 - system_load) / 64).max(1);
                         let stride = reads[1] - reads[0];
-                        prefetch_sender.send(reads[1] + stride);
+                        prefetch_sender.send(block_id + (stride * steps));
                     }
+
+                    // Provide point for exiting the server if it crashed.
                     CurrentServer::abort_point();
+                    server.shutdown.check_for_shutdown()?;
                 }
             }
         });
         Ok(server)
+    }
+}
+
+trait UnwrapOrWhateverExt<T> {
+    fn unwrap_or_whatever(self) -> Result<T, Whatever>;
+}
+
+impl<T> UnwrapOrWhateverExt<T> for Option<T> {
+    fn unwrap_or_whatever(self) -> Result<T, Whatever> {
+        match self {
+            Some(v) => Ok(v),
+            None => Err(whatever!("Unwrapped None")),
+        }
     }
 }

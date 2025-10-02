@@ -9,7 +9,7 @@ use orpc::{
     sync::{Mutex, blocker::select},
 };
 
-use crate::block_device::{Block, BlockCache, BlockDevice, IOError, ReadRequest};
+use crate::block_device::{Block, BlockCache, BlockDevice, EvictionPolicy, IOError, ReadRequest};
 
 #[orpc_server(crate::block_device::BlockDevice, crate::block_device::BlockCache)]
 pub struct Cache {
@@ -17,6 +17,7 @@ pub struct Cache {
     reply_oqueue: OQueueRef<Block>,
     underlying: ServerRef<dyn BlockDevice>,
     cache_size: usize,
+    eviction_policy: ServerRef<dyn EvictionPolicy>,
 }
 
 #[orpc_impl]
@@ -51,18 +52,40 @@ impl BlockCache for Cache {
 
 impl Cache {
     fn insert_cached_block(&self, block: &Block) {
-        println!("    Inserting {} (Cache)", block.block_id);
         let mut cache = self.cache.lock();
+        if cache.len() >= self.cache_size {
+            self.evict_block(&mut cache);
+        }
+
+        // If we still don't have space, do not insert into cache at all.
+        if cache.len() >= self.cache_size {
+            println!("    Cache insertion failed {} (Cache)", block.block_id);
+            return;
+        }
+
+        println!("    Inserting {} (Cache)", block.block_id);
         match cache.entry(block.block_id) {
             std::collections::hash_map::Entry::Occupied(_) => {}
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                if let Err(e) = self.eviction_policy.inserted(block.block_id) {
+                    println!(
+                        "leaked block {}. It may never be evicted. {}",
+                        block.block_id, e
+                    );
+                }
                 vacant_entry.insert(block.data.clone());
             }
         }
-        if cache.len() > self.cache_size {
-            if let Some(k) = cache.keys().min().copied() {
-                // println!("Cache: Evicting {}", k);
+    }
+
+    fn evict_block(&self, cache: &mut HashMap<usize, Box<[u8]>>) {
+        match self.eviction_policy.select_victim() {
+            Ok(k) => {
+                // println!("    Evicting {} (Cache)", k);
                 cache.remove(&k);
+            }
+            Err(e) => {
+                println!("eviction error: {}", e);
             }
         }
     }
@@ -73,7 +96,9 @@ impl Cache {
         block_id: usize,
         outstanding_requests: &mut HashMap<usize, Vec<Box<dyn Sender<Block>>>>,
     ) {
-        if !outstanding_requests.contains_key(&block_id) && !self.cache.lock().contains_key(&block_id) {
+        if !outstanding_requests.contains_key(&block_id)
+            && !self.cache.lock().contains_key(&block_id)
+        {
             underlying_read_request_sender.send(ReadRequest {
                 reply_to: self.reply_oqueue.attach_sender().unwrap(),
                 block_id,
@@ -165,6 +190,7 @@ impl Cache {
 
     pub fn spawn(
         underlying: ServerRef<dyn BlockDevice>,
+        eviction_policy: ServerRef<dyn EvictionPolicy>,
         cache_size: usize,
     ) -> Result<ServerRef<Self>, Box<dyn Error>> {
         let server = Self::new_with(|orpc_internal| Self {
@@ -173,6 +199,7 @@ impl Cache {
             cache: Default::default(),
             reply_oqueue: LockingQueue::new(16),
             underlying: underlying.clone(),
+            eviction_policy: eviction_policy.clone(),
         });
         spawn_thread(server.clone(), {
             let server = server.clone();

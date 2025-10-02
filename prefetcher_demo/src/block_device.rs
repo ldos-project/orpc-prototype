@@ -1,5 +1,7 @@
 //! Traits for block devices.
 
+use std::usize;
+
 use orpc::{
     oqueue::{
         OQueueAttachError, OQueueRef, Sender,
@@ -69,4 +71,10 @@ pub(crate) enum IOError {
     /// An error in the IO operation.
     #[snafu(display("{message}"))]
     IOFailure { message: String },
+}
+
+#[orpc_trait]
+pub(crate) trait EvictionPolicy {
+    fn select_victim(&self) -> Result<usize, IOError>;
+    fn inserted(&self, block_id: usize) -> Result<(), RPCError>;
 }

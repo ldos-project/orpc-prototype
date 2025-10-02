@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 orpc = { path = "../orpc" }
 snafu = "*"
+rand = "*"
+egui = "0.32"
+eframe = "0.32"
 
 [lints]
 workspace = true
