@@ -39,7 +39,7 @@ impl RPCError {
         // TODO: The `to_string` call could potentially allocate which could be an issue on the panic path. A better way
         // to do this may be needed.
         Self::Panic {
-            message: payload_as_str(&payload)
+            message: payload_as_str(payload.as_ref())
                 .unwrap_or("Non-string panic payload")
                 .to_string(),
         }

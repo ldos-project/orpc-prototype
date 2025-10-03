@@ -89,6 +89,8 @@ fn process_orpc_method(
         block: body,
     } = method;
 
+    let ret_type = &sig.output;
+
     // Don't check for illegal signatures. Those will already have been checked at the trait definition.
 
     let base_ref: Expr = parse_quote! { ::orpc::orpc_impl::Server::orpc_server_base(self) };
@@ -118,7 +120,7 @@ fn process_orpc_method(
 
         match ::std::panic::catch_unwind(|| {
             #enter_server_context
-            #body
+            (|| #ret_type #body)()
         }) #error_cases
 
     };

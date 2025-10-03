@@ -12,8 +12,8 @@ use std::{
 use snafu::{ResultExt as _, Whatever};
 
 use crate::{
-    oqueue::{OQueueRef, Receiver, locking::LockingQueue},
-    orpc_impl::{ServerRef, errors::RPCError, framework::CurrentServer},
+    oqueue::{locking::LockingQueue, OQueueRef, Receiver},
+    orpc_impl::{errors::RPCError, framework::CurrentServer, ServerRef}, spawn_thread,
 };
 
 // #[observable]
@@ -76,7 +76,7 @@ impl ServerAState {
             atomic_count,
             orpc_internal,
         });
-        CurrentServer::spawn_thread(server.clone(), {
+        spawn_thread(server.clone(), {
             let server = server.clone();
             let incr_oqueue_receiver = server
                 .incr_oqueue()

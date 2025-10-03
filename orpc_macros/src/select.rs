@@ -82,7 +82,7 @@ pub fn select_macro_impl(input: SelectInput) -> proc_macro2::TokenStream {
 
     let output = quote! {
         {
-            Task::current().block_on(&[#(::std::convert::AsRef::as_ref(&#blockers)),*]);
+            ::orpc::sync::task::Task::current().block_on(&[#(::std::convert::AsRef::as_ref(&#blockers)),*]);
             #(#check_statements)*
         }
     };

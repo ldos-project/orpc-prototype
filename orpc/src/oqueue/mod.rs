@@ -1,5 +1,6 @@
 mod generic_test;
 pub mod locking;
+pub mod registry;
 
 use core::ops::{Add, Sub};
 use std::{
@@ -102,6 +103,9 @@ pub trait WeakObserver<T>: Send + UnwindSafe + Blocker {
     /// the given index.
     fn weak_observe(&self, index: Cursor) -> Option<T>;
 
+    /// Wait for new data to become available.
+    fn wait(&self);
+
     /// Return a cursor pointing to the most recent value in the oqueue. This has very relaxed consistency, the element
     /// may no longer be the most recent or even no longer be available.
     fn recent_cursor(&self) -> Cursor;
@@ -111,7 +115,7 @@ pub trait WeakObserver<T>: Send + UnwindSafe + Blocker {
     fn oldest_cursor(&self) -> Cursor;
 
     /// Return all available values in the range provided.
-    fn weak_observer_range(&self, start: Cursor, end: Cursor) -> alloc::vec::Vec<T> {
+    fn weak_observe_range(&self, start: Cursor, end: Cursor) -> alloc::vec::Vec<T> {
         let mut res = alloc::vec::Vec::default();
         for i in start.index()..end.index() {
             if let Some(v) = self.weak_observe(Cursor(i)) {
@@ -119,6 +123,12 @@ pub trait WeakObserver<T>: Send + UnwindSafe + Blocker {
             }
         }
         res
+    }
+
+    /// Return the most recent `n` values from the OQueue. Some values may be missing.
+    fn weak_observe_recent(&self, n: usize) -> alloc::vec::Vec<T> {
+        let now = self.recent_cursor();
+        self.weak_observe_range(now - n, now)
     }
 }
 
